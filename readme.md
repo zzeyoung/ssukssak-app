@@ -43,7 +43,7 @@ ssukssak-app/
 ├── docs/                   # 기획서, API 명세서, 피드백 등 문서
 ├── README.md               # 프로젝트 설명 파일
 └── .gitignore              # Git 무시 파일 설정
-
+```
 
 ---
 
