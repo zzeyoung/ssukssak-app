@@ -1,0 +1,227 @@
+openapi: 3.0.0
+info:
+  title: 쓱싹(SseukSsak) API 문서
+  version: 1.0.0
+  description: 📸 사진 자동 분류 및 정리 백엔드 API 명세
+
+servers:
+  - url: http://localhost:3000
+    description: 로컬 개발 서버
+
+paths:
+
+  /classify:
+    post:
+      summary: 단일 사진 분류
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                photoId: { type: string }
+                userId: { type: string }
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: number
+                filename: { type: string }
+                duplicateGroupId: { type: string, nullable: true }
+                similarGroupId: { type: string, nullable: true }
+      responses:
+        '200':
+          description: 분류 성공
+
+  /classify/save-all:
+    post:
+      summary: 여러 장의 사진 분류 결과 저장
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string }
+                classifiedPhotos:        # ✅ 이름 변경
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      photoId: { type: string }
+                      tags:
+                        type: object
+                        additionalProperties:
+                          type: number
+                      filename: { type: string }
+                      duplicateGroupId: { type: string, nullable: true }
+                      similarGroupId: { type: string, nullable: true }
+                      contentTags:
+                        type: array
+                        items: { type: string }
+                      location:              # ✅ location 추가
+                        type: object
+                        properties:
+                          lat: { type: number }
+                          lon: { type: number }
+      responses:
+        '200':
+          description: 저장 완료
+
+  /classify/result:
+    get:
+      summary: 분류 결과 전체 조회
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 분류 결과 리스트
+
+  /classify/screenshots/{userId}:
+    get:
+      summary: 스크린샷 세부 분류 확인
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 세부 폴더별 분류 결과 반환
+
+  /classify/folder-summary/{userId}:
+    get:
+      summary: 자동 분류된 5개 폴더 요약 정보 조회
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 폴더별 썸네일, 개수, 저장 절감량 등 반환
+
+  /classify/folder/{userId}/{folderName}:
+    get:
+      summary: 자동 분류 폴더 내 사진 리스트 조회
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: folderName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 해당 폴더 내 사진 리스트 반환
+
+  /highlight/folders/{userId}:
+    get:
+      summary: 하이라이트 폴더 정렬 및 자동 포함
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 폴더 리스트 반환
+
+  /highlight/folders/{userId}/photos/{folderName}:
+    get:
+      summary: 특정 폴더 내 사진 조회 (예: 여행)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: folderName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 폴더 내 사진 리스트 반환
+
+  /highlight/action:
+    post:
+      summary: 스와이프 액션 기록 저장 (보관/보류/삭제)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string }
+                photoId: { type: string }
+                action:
+                  type: string
+                  enum: [saved, skipped, deleted]
+      responses:
+        '200':
+          description: 저장 완료
+
+  /highlight/history:
+    get:
+      summary: 사용자 스와이프 히스토리 조회
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 사용자 액션 이력 반환
+
+  /user/preferences:
+    post:
+      summary: 사용자 프롬프트 태그 저장
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string }
+                promptTags:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: 저장 완료
+
+    get:
+      summary: 사용자 프롬프트 태그 조회
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 사용자 프롬프트 반환
+
+  /user/prompts/init:
+    get:
+      summary: 초기 프롬프트 리스트 조회
+      responses:
+        '200':
+          description: 태그 리스트 반환
