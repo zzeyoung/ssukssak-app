@@ -1,3 +1,5 @@
+// lib/screens/login_choice_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uni_links/uni_links.dart';
@@ -7,15 +9,14 @@ import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginChoiceScreen extends StatefulWidget {
-  const LoginChoiceScreen({super.key});
+  const LoginChoiceScreen({Key? key}) : super(key: key);
 
   @override
   State<LoginChoiceScreen> createState() => _LoginChoiceScreenState();
 }
 
 class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
-  final String backendBaseUrl = 'http://10.0.2.2:3000'; // ✅ 에뮬레이터 전용 IP
-
+  final String backendBaseUrl = 'http://10.0.2.2:3000';
   final String cognitoLoginUrl =
       'https://ap-southeast-2cnp2bd9aj.auth.ap-southeast-2.amazoncognito.com/login'
       '?client_id=h2e9vnf4jcd26m4aapifu9dq1'
@@ -41,6 +42,7 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
           if (success) {
             debugPrint('🎉 로그인 성공');
             await _getUserInfo();
+            // 로그인 후 원하는 화면으로 이동할 수 있음
           } else {
             debugPrint('❌ 로그인 실패');
           }
@@ -55,14 +57,11 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
     try {
       final uri = Uri.parse('$backendBaseUrl/auth/callback?code=$code');
       final response = await http.get(uri);
-
       debugPrint('🌐 응답코드: ${response.statusCode}');
       debugPrint('🌐 응답본문: ${response.body}');
-
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final accessToken = json['access_token'];
-
+        final jsonMap = jsonDecode(response.body);
+        final accessToken = jsonMap['access_token'];
         if (accessToken != null) {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('access_token', accessToken);
@@ -89,13 +88,12 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
         debugPrint('❌ 저장된 토큰 없음');
         return;
       }
-
       final response = await http.get(
         Uri.parse('$backendBaseUrl/auth/me'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       debugPrint('👤 사용자 정보: ${response.statusCode} / ${response.body}');
+      // 로그인 성공 후, 홈 화면으로 이동하거나 원하는 흐름 구현
     } catch (e) {
       debugPrint('❌ 사용자 정보 요청 실패: $e');
     }
@@ -103,8 +101,6 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
 
   void _loginWithGoogle() async {
     final uri = Uri.parse(cognitoLoginUrl);
-    debugPrint('🔗 로그인 URL: $uri');
-
     try {
       await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
     } catch (e) {
@@ -184,6 +180,30 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
                         "이메일로 시작하기",
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
+                    ),
+                    const SizedBox(height: 32),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pushNamed(context, '/photoAnalyzer');
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueAccent,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text(
+                        "AI 모델 결과 확인하기",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      "※ 테스트용: 로그인 없이 AI 분석 페이지로 넘어갑니다.",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),

@@ -24,3 +24,5 @@ class SsukssakApp extends StatelessWidget {
 }
 // 이 파일은 Flutter 앱의 진입점입니다.
 // 여기서 앱을 실행하고, 필요한 화면과 라우트를 설정합니다.
+// 이 파일은 Flutter 앱의 진입점입니다.
+// 여기서 앱을 실행하고, 필요한 화면과 라우트를 설정합니다.

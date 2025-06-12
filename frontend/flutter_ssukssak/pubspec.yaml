@@ -36,8 +36,11 @@ dependencies:
   cupertino_icons: ^1.0.6   # ✅ ✅ ✅ 이거 한 번만 있어야 함
   uni_links: ^0.5.1
   shared_preferences: ^2.3.3
+  tflite_flutter: ^0.11.0
+  image: ^3.0.2
+  image_picker: ^1.1.2
 
-
+ 
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -63,6 +66,10 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/images/login_background.png
+    - assets/ai/meta_model_float32.tflite
+    - assets/ai/mobileclip_image_nhwc.tflite
+    - assets/ai/yolo11_float32.tflite
+
 
   # To add assets to your application, add an assets section, like this:
   # assets:
