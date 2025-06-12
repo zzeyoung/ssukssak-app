@@ -1,258 +1,169 @@
-// lib/ai/yolo_service.dart
-
+import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter/material.dart';
 
 class YoloResult {
   final double x;
   final double y;
   final double w;
   final double h;
+  final double score;
   final int classId;
-  final double confidence;
-  final String label;
 
-  YoloResult({
-    required this.x,
-    required this.y,
-    required this.w,
-    required this.h,
-    required this.classId,
-    required this.confidence,
-    required this.label,
-  });
+  YoloResult(this.x, this.y, this.w, this.h, this.score, this.classId);
 }
 
 class YoloService {
-  // 싱글턴으로 바꾸고 싶으면 아래 패턴 추가
+  // ---------- 싱글턴 ----------
   static final YoloService _instance = YoloService._internal();
   factory YoloService() => _instance;
   YoloService._internal();
 
-  Interpreter? _interpreter;
-  bool _isLoaded = false;
-  Future<void>? _loadingFuture;
+  // ---------- 필드 ----------
+  late Interpreter _interpreter;
+  final int inputSize = 640;
+  final double threshold = 0.05; // ← 0.05로 낮춰서 먼저 확인
+  List<String> _labelList = [];
 
-  // COCO 클래스 레이블 리스트 (필요에 따라 수정)
-  final List<String> labels = [
-    'person',
-    'bicycle',
-    'car',
-    'motorbike',
-    'aeroplane',
-    'bus',
-    'train',
-    'truck',
-    'boat',
-    'traffic light',
-    'fire hydrant',
-    'stop sign',
-    'parking meter',
-    'bench',
-    'bird',
-    'cat',
-    'dog',
-    'horse',
-    'sheep',
-    'cow',
-    'elephant',
-    'bear',
-    'zebra',
-    'giraffe',
-    'backpack',
-    'umbrella',
-    'handbag',
-    'tie',
-    'suitcase',
-    'frisbee',
-    'skis',
-    'snowboard',
-    'sports ball',
-    'kite',
-    'baseball bat',
-    'baseball glove',
-    'skateboard',
-    'surfboard',
-    'tennis racket',
-    'bottle',
-    'wine glass',
-    'cup',
-    'fork',
-    'knife',
-    'spoon',
-    'bowl',
-    'banana',
-    'apple',
-    'sandwich',
-    'orange',
-    'broccoli',
-    'carrot',
-    'hot dog',
-    'pizza',
-    'donut',
-    'cake',
-    'chair',
-    'sofa',
-    'pottedplant',
-    'bed',
-    'diningtable',
-    'toilet',
-    'tvmonitor',
-    'laptop',
-    'mouse',
-    'remote',
-    'keyboard',
-    'cell phone',
-    'microwave',
-    'oven',
-    'toaster',
-    'sink',
-    'refrigerator',
-    'book',
-    'clock',
-    'vase',
-    'scissors',
-    'teddy bear',
-    'hair drier',
-    'toothbrush'
-  ];
+  // ---------- 모델 & 라벨 로드 ----------
+  Future<void> loadModel() async {
+    // CPU 전용 (delegate 미사용)
+    _interpreter = await Interpreter.fromAsset(
+      'assets/ai/yolo11n_float32.tflite',
+      options: InterpreterOptions(), // 기본값 = CPU
+    );
 
-  Future<void> loadModel() {
-    if (_isLoaded) {
-      return Future.value();
-    }
-    if (_loadingFuture != null) {
-      return _loadingFuture!;
-    }
-    _loadingFuture = _loadInterpreter();
-    return _loadingFuture!;
-  }
-
-  Future<void> _loadInterpreter() async {
     try {
-      // pubspec.yaml에 'assets/ai/yolo11_float32.tflite' 로 등록했다면:
-      _interpreter =
-          await Interpreter.fromAsset('assets/ai/yolo11_float32.tflite');
-      _isLoaded = true;
-      print('✅ YOLO 모델 로드 완료');
-      // 입력/출력 텐서 정보 로그
-      final inputT = _interpreter!.getInputTensor(0);
-      final outputT = _interpreter!.getOutputTensor(0);
-      print('📐 YOLO input shape: ${inputT.shape}, type: ${inputT.type}');
-      print('📐 YOLO output shape: ${outputT.shape}, type: ${outputT.type}');
+      final labels = await rootBundle.loadString('assets/labels/coco.txt');
+      _labelList = labels
+          .split('\n')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+
+      debugPrint('✅ 라벨 로딩 완료 (${_labelList.length}개)');
     } catch (e) {
-      print('❌ YOLO 모델 로딩 실패: $e');
-      _loadingFuture = null;
-      _isLoaded = false;
-      _interpreter = null;
-      rethrow;
+      debugPrint('❌ 라벨 파일 로딩 실패: $e');
     }
+
+    // 텐서 정보 로그
+    debugPrint('▶︎ Indput  : ${_interpreter.getInputTensor(0).shape} '
+        '${_interpreter.getInputTensor(0).type}');
+    debugPrint('▶︎ Output : ${_interpreter.getOutputTensor(0).shape} '
+        '${_interpreter.getOutputTensor(0).type}');
   }
 
-  bool get isLoaded => _isLoaded;
+  // ---------- 다중 라벨 감지 ----------
+  Future<List<String>> detectLabels(img.Image image) async {
+    final inputTensor = _preprocess(image);
+    final output = List.filled(1 * 300 * 6, 0.0).reshape([1, 300, 6]);
 
-  /// detectLabels: 단순 라벨 목록 반환
-  Future<List<String>> detectLabels(img.Image image,
-      {double threshold = 0.25}) async {
-    final objs = await detectObjects(image, threshold: threshold);
-    final tags = objs.map((r) => r.label).toSet().toList();
-    print('🎯 YOLO 탐지 라벨: $tags');
-    return tags;
+    _interpreter.run(inputTensor, output);
+
+    final Set<String> results = {};
+    for (int i = 0; i < output[0].length; i++) {
+      final det = output[0][i];
+      final score = det[4];
+      if (score > threshold) {
+        final classId = det[5].round();
+        final label = (classId >= 0 && classId < _labelList.length)
+            ? _labelList[classId]
+            : 'Unknown';
+        debugPrint(
+            '🔍 [$i] classId=$classId, score=${score.toStringAsFixed(2)}, label=$label');
+        results.add(label);
+      }
+    }
+
+    // maxScore 계산 시 타입 충돌 방지
+    final maxScore =
+        output[0].map((d) => d[4] as double).reduce((a, b) => a > b ? a : b);
+    debugPrint('🧮 maxScore = ${maxScore.toStringAsFixed(3)}');
+
+    return results.toList();
   }
 
-  /// detectObjects: 후처리(NMS 등) 포함
-  Future<List<YoloResult>> detectObjects(img.Image image,
-      {double threshold = 0.25}) async {
-    if (!_isLoaded) {
-      await loadModel();
-    }
-    if (_interpreter == null) {
-      throw Exception('YoloService: Interpreter가 초기화되지 않았습니다.');
+  // ---------- 최고 신뢰도 결과 ----------
+  Future<String?> detectTopResult(img.Image image) async {
+    final inputTensor = _preprocess(image);
+    final output = List.filled(1 * 300 * 6, 0.0).reshape([1, 300, 6]);
+
+    _interpreter.run(inputTensor, output);
+
+    List<double> bestDet = [];
+    double maxScore = -1.0;
+
+    for (final det in output[0]) {
+      if (det[4] > maxScore) {
+        maxScore = det[4];
+        bestDet = det;
+      }
     }
 
-    // 입력 이미지 리사이즈: 모델 입력 크기에 맞게 설정
-    const int inputSize = 640; // 예: 640x640 YOLO 모델
-    final resized = img.copyResize(image, width: inputSize, height: inputSize);
+    if (bestDet.isNotEmpty && maxScore > threshold) {
+      final classId = bestDet[5].round();
+      final label = (classId >= 0 && classId < _labelList.length)
+          ? _labelList[classId]
+          : 'Unknown';
 
-    // 입력 텐서 구성: [1][inputSize][inputSize][3]
-    var input = List.generate(
+      return 'Class: $label ($classId) | '
+          'Score: ${bestDet[4].toStringAsFixed(2)} | '
+          'Box: ${bestDet.sublist(0, 4).map((v) => v.toStringAsFixed(1)).join(', ')}';
+    }
+    return null;
+  }
+
+  // ---------- Letterbox 전처리 (BGR·NHWC·float32) ----------
+  List<List<List<List<double>>>> _preprocess(img.Image src) {
+    // 0) EXIF 방향 보정
+    final img.Image oriented = img.bakeOrientation(src);
+
+    // 1) 비율 유지 축소
+    final double scale =
+        min(inputSize / oriented.width, inputSize / oriented.height);
+    final int newW = (oriented.width * scale).round();
+    final int newH = (oriented.height * scale).round();
+
+    final img.Image resized = img.copyResize(
+      oriented,
+      width: newW,
+      height: newH,
+      interpolation: img.Interpolation.linear,
+    );
+
+    // 2) 검은 Letterbox 캔버스 생성
+    final img.Image canvas = img.Image.rgb(inputSize, inputSize);
+    canvas.fill(0); // (0,0,0)
+
+    final int dx = ((inputSize - newW) / 2).round();
+    final int dy = ((inputSize - newH) / 2).round();
+    img.copyInto(canvas, resized, dstX: dx, dstY: dy);
+
+    // 3) NHWC float32, BGR 순서
+    final input = List.generate(
       1,
       (_) => List.generate(
         inputSize,
         (y) => List.generate(
           inputSize,
           (x) {
-            int pixel = resized.getPixel(x, y);
-            // image 패키지 버전 문제 시 getRed 등 함수가 없다면 비트 연산으로 대체:
-            int r = (pixel >> 16) & 0xFF;
-            int g = (pixel >> 8) & 0xFF;
-            int b = pixel & 0xFF;
-            return [r / 255.0, g / 255.0, b / 255.0];
+            final p = canvas.getPixel(x, y);
+            return [
+              img.getBlue(p) / 255.0, // B
+              img.getGreen(p) / 255.0, // G
+              img.getRed(p) / 255.0, // R
+            ];
           },
+          growable: false,
         ),
+        growable: false,
       ),
+      growable: false,
     );
 
-    // 출력 텐서 형태 파악
-    final shape = _interpreter!.getOutputTensor(0).shape;
-    // shape 예: [1, 8400, 85] 등, 모델마다 다름
-    final batch = shape[0];
-    final numBoxes = shape[1];
-    final channels = shape[2];
-    // 출력 버퍼 생성
-    var output = List.generate(
-      batch,
-      (_) => List.generate(
-        numBoxes,
-        (_) => List<double>.filled(channels, 0.0),
-      ),
-    );
-
-    // 모델 실행
-    try {
-      _interpreter!.run(input, output);
-    } catch (e) {
-      print('❌ YOLO run 오류: $e');
-      rethrow;
-    }
-
-    // 후처리: objectness, class score, NMS 등
-    final List<YoloResult> results = [];
-    final b0 = output[0]; // [numBoxes][channels]
-    for (int i = 0; i < numBoxes; i++) {
-      final cx = b0[i][0];
-      final cy = b0[i][1];
-      final w = b0[i][2];
-      final h = b0[i][3];
-      final objectness = b0[i][4];
-      if (objectness <= 0) continue;
-      // class scores 중 최대값 찾기
-      double maxScore = 0.0;
-      int classId = -1;
-      for (int c = 0; c < labels.length && 5 + c < channels; c++) {
-        final score = b0[i][5 + c];
-        if (score > maxScore) {
-          maxScore = score;
-          classId = c;
-        }
-      }
-      if (classId < 0) continue;
-      final confidence = objectness * maxScore;
-      if (confidence < threshold) continue;
-
-      final label = (classId < labels.length) ? labels[classId] : 'unknown';
-      results.add(YoloResult(
-        x: cx,
-        y: cy,
-        w: w,
-        h: h,
-        classId: classId,
-        confidence: confidence,
-        label: label,
-      ));
-    }
-
-    return results;
+    return input;
   }
 }

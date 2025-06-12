@@ -1,5 +1,3 @@
-// lib/screens/photo_analyzer.dart
-
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -38,13 +36,12 @@ class _PhotoAnalyzerState extends State<PhotoAnalyzer> {
     try {
       await ScoreService().loadModel();
       await ClipService().loadModel();
-      await YoloService().loadModel();
+      await YoloService().loadModel(); // YOLO 모델도 로드
       setState(() {
         _modelsLoaded = true;
       });
     } catch (e) {
       debugPrint('❌ 모델 로딩 중 오류: $e');
-      // 필요하다면 사용자에게 alert을 띄우도록 추가 구현 가능
     } finally {
       setState(() {
         _isLoadingModels = false;
@@ -73,19 +70,18 @@ class _PhotoAnalyzerState extends State<PhotoAnalyzer> {
     List<double> resultVector = [];
     List<String> resultTags = [];
 
-    // ScoreService 예측
     try {
       resultScore = await ScoreService().predictScore(image);
     } catch (e) {
       debugPrint('❌ ScoreService 예측 오류: $e');
     }
-    // ClipService 예측
+
     try {
       resultVector = await ClipService().predictFeatures(image);
     } catch (e) {
       debugPrint('❌ ClipService 예측 오류: $e');
     }
-    // YoloService 예측
+
     try {
       resultTags = await YoloService().detectLabels(image);
     } catch (e) {
@@ -98,6 +94,11 @@ class _PhotoAnalyzerState extends State<PhotoAnalyzer> {
       contentTags = resultTags;
       photoFile = file;
     });
+
+    debugPrint("📌 분석 결과 요약");
+    debugPrint("- 예쁨 점수: $resultScore");
+    debugPrint("- CLIP 벡터 길이: ${resultVector.length}");
+    debugPrint("- YOLO 태그: $resultTags");
   }
 
   @override
@@ -108,8 +109,8 @@ class _PhotoAnalyzerState extends State<PhotoAnalyzer> {
         body: const Center(child: CircularProgressIndicator()),
       );
     }
+
     if (!_modelsLoaded) {
-      // 로딩 시도 후 실패했을 때 재시도 UI
       return Scaffold(
         appBar: AppBar(title: const Text('모델 로딩 실패')),
         body: Center(
@@ -121,7 +122,6 @@ class _PhotoAnalyzerState extends State<PhotoAnalyzer> {
       );
     }
 
-    // 모델 로딩이 완료된 경우
     return Scaffold(
       appBar: AppBar(title: const Text('쓱싹 - AI 모델 결과')),
       body: Center(
@@ -136,7 +136,7 @@ class _PhotoAnalyzerState extends State<PhotoAnalyzer> {
               ],
               if (score != null) ...[
                 Text(
-                  '예쁨 점수: ${(score! * 100).toStringAsFixed(2)}',
+                  '예쁨 점수dd: ${(score! * 100).toStringAsFixed(2)}',
                   style: const TextStyle(fontSize: 20),
                 ),
                 const SizedBox(height: 12),

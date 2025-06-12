@@ -19,7 +19,7 @@ class ClipService {
     'person': [/* 512 values */],
     'dog': [/* 512 values */],
     'cat': [/* 512 values */],
-    'cup': [/* 512 values */],
+    'cup': [/* 512 va lues */],
     'bottle': [/* 512 values */],
     'book': [/* 512 values */],
     'laptop': [/* 512 values */],
