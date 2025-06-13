@@ -205,6 +205,29 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
                       style: TextStyle(fontSize: 12, color: Colors.grey),
                       textAlign: TextAlign.center,
                     ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pushNamed(context, '/metadata-debug');
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.deepPurple,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text(
+                        "📷 갤럭시 메타데이터 확인",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      "※ 테스트용: 갤러리 사진 메타데이터 확인 페이지로 이동합니다.",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.center,
+                    ),
                   ],
                 ),
               ),

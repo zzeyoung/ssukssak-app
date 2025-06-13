@@ -1,123 +1,113 @@
-// lib/ai/clip_service.dart
-
+import 'dart:convert';
 import 'dart:math';
-import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:image/image.dart' as img;
+import 'package:tflite_flutter/tflite_flutter.dart';
 
 class ClipService {
-  static final ClipService _instance = ClipService._internal();
-  factory ClipService() => _instance;
-  ClipService._internal();
+  ClipService._();
+  static final ClipService _inst = ClipService._();
+  factory ClipService() => _inst;
 
-  Interpreter? _interpreter;
-  bool _isLoaded = false;
-  Future<void>? _loadingFuture;
+  late final Interpreter _interpreter;
+  late final Map<String, List<double>> _textEmb; // 이미 L2 정규화
+  bool _ready = false;
 
-  /// (예시) 사전계산된 텍스트 임베딩 맵 (태그 → 512차원 벡터)
-  static const Map<String, List<double>> _textEmbeddings = {
-    // 실제 사용 시, 512개 double 값을 채워넣어야 함
-    'person': [/* 512 values */],
-    'dog': [/* 512 values */],
-    'cat': [/* 512 values */],
-    'cup': [/* 512 va lues */],
-    'bottle': [/* 512 values */],
-    'book': [/* 512 values */],
-    'laptop': [/* 512 values */],
-    'tree': [/* 512 values */],
-    'car': [/* 512 values */],
-    'food': [/* 512 values */],
-    // 추가 태그 ...
-  };
-
-  Future<void> loadModel() {
-    if (_isLoaded) return Future.value();
-    if (_loadingFuture != null) return _loadingFuture!;
-    _loadingFuture = _loadInterpreter();
-    return _loadingFuture!;
+  // ── 모델만 따로 로드 ──
+  Future<void> loadModel() async {
+    _interpreter =
+        await Interpreter.fromAsset('assets/ai/mobileclip_image_nhwc.tflite');
+    final inShape = _interpreter.getInputTensor(0).shape;
+    final outShape = _interpreter.getOutputTensor(0).shape;
+    assert(inShape[1] == 224 && outShape.last == 512,
+        'CLIP 모델 입·출력 크기가 예상과 다릅니다.');
   }
 
-  Future<void> _loadInterpreter() async {
-    try {
-      // pubspec.yaml에 'assets/ai/mobileclip_image_nhwc.tflite' 로 등록했다면:
-      _interpreter =
-          await Interpreter.fromAsset('assets/ai/mobileclip_image_nhwc.tflite');
-      _isLoaded = true;
-      print('✅ CLIP 모델 로드 완료');
-    } catch (e) {
-      print('❌ CLIP 모델 로딩 실패: $e');
-      _loadingFuture = null;
-      _isLoaded = false;
-      _interpreter = null;
-      rethrow;
-    }
+  // ── 전체 초기화 ──
+  Future<void> init() async {
+    if (_ready) return;
+
+    // 1) 모델 로드
+    await loadModel();
+
+    // 2) 텍스트 임베딩 로드
+    final js = await rootBundle.loadString('assets/labels/tb512.json');
+    final raw = json.decode(js) as Map<String, dynamic>;
+    _textEmb = raw.map((tag, v) {
+      final vec = (v as List).cast<num>().map((e) => e.toDouble()).toList();
+      final n = sqrt(vec.fold(0.0, (s, e) => s + e * e));
+      return MapEntry(tag, vec.map((e) => e / n).toList());
+    });
+
+    _ready = true;
+    print('✅ ClipService ready (labels: ${_textEmb.length})');
   }
 
-  bool get isLoaded => _isLoaded;
+  // ── 이미지 224×224 → 512차 벡터 ──
+  Future<List<double>> _encode(img.Image image) async {
+    if (!_ready) await init();
+    final resized = img.copyResize(image, width: 224, height: 224);
 
-  /// 이미지 → 512차원 벡터 추출
-  Future<List<double>> predictFeatures(img.Image image) async {
-    if (!_isLoaded) {
-      await loadModel();
-    }
-    if (_interpreter == null) {
-      throw Exception('ClipService: Interpreter가 초기화되지 않았습니다.');
-    }
-
-    const int inputSize = 224; // CLIP 모델 입력 크기에 맞춰 수정
-    final resized = img.copyResize(image, width: inputSize, height: inputSize);
-
-    // 입력 텐서 구성: [1][inputSize][inputSize][3]
-    var input = List.generate(
+    final input = List.generate(
       1,
       (_) => List.generate(
-        inputSize,
+        224,
         (y) => List.generate(
-          inputSize,
+          224,
           (x) {
-            int pixel = resized.getPixel(x, y);
-            int r = (pixel >> 16) & 0xFF;
-            int g = (pixel >> 8) & 0xFF;
-            int b = pixel & 0xFF;
-            return [r / 255.0, g / 255.0, b / 255.0];
+            final p = resized.getPixel(x, y);
+            return [
+              img.getRed(p) / 255.0,
+              img.getGreen(p) / 255.0,
+              img.getBlue(p) / 255.0,
+            ];
           },
         ),
       ),
     );
 
-    // 출력 텐서: [1][512]
-    const int featureDim = 512; // 실제 CLIP 모델 출력 차원
-    var output = List.generate(1, (_) => List<double>.filled(featureDim, 0.0));
+    final output = List.generate(1, (_) => List.filled(512, 0.0));
+    _interpreter.run(input, output);
 
-    try {
-      _interpreter!.run(input, output);
-    } catch (e) {
-      print('❌ CLIP run 오류: $e');
-      rethrow;
-    }
-
-    return List<double>.from(output[0]);
+    print('[CLIP] raw first5: '
+        '${output[0].take(5).map((e) => e.toStringAsFixed(4)).toList()}');
+    return output[0];
   }
 
-  /// 이미지 임베딩 ↔ 텍스트 임베딩 비교하여 topK 태그 반환
-  Future<List<String>> predictLabels(img.Image image, {int topK = 5}) async {
-    // 1) 이미지 벡터 얻고 L2 정규화
-    final imgVec = await predictFeatures(image);
-    final norm = sqrt(imgVec.map((e) => e * e).reduce((a, b) => a + b));
-    final normedImg = imgVec.map((e) => e / norm).toList();
+  // ── Top-K 라벨 예측 ──
+  Future<List<String>> predictLabels(
+    img.Image image, {
+    int topK = 3,
+  }) async {
+    final vec = await _encode(image);
 
-    // 2) 텍스트 임베딩과 cosine similarity 계산
+    final n = sqrt(vec.fold(0.0, (s, e) => s + e * e));
+    if (n == 0) {
+      print('[CLIP] ⚠️ 이미지 벡터 norm==0 (전처리·모델 확인 필요)');
+      return [];
+    }
+    print('[CLIP] img norm = ${n.toStringAsFixed(5)}');
+
+    final imgNorm = vec.map((e) => e / n).toList();
+
     final sims = <MapEntry<String, double>>[];
-    _textEmbeddings.forEach((tag, txtVec) {
-      // txtVec 역시 L2 정규화 되어 있다고 가정. 아니라면 정규화 필요.
-      double dot = 0.0;
-      for (int i = 0; i < txtVec.length && i < normedImg.length; i++) {
-        dot += normedImg[i] * txtVec[i];
+    _textEmb.forEach((tag, txt) {
+      double dot = 0;
+      for (int i = 0; i < 512; i++) {
+        dot += imgNorm[i] * txt[i];
       }
       sims.add(MapEntry(tag, dot));
     });
-
-    // 3) 내림차순 정렬 후 topK
     sims.sort((a, b) => b.value.compareTo(a.value));
+
+    print('[CLIP] dot TOP10');
+    for (var e in sims.take(10)) {
+      print('  • ${e.key.padRight(15)}  ${e.value.toStringAsFixed(4)}');
+    }
+
     return sims.take(topK).map((e) => e.key).toList();
   }
+
+  // ── 이미지 벡터 직접 얻기 ──
+  Future<List<double>> predictFeatures(img.Image image) => _encode(image);
 }
