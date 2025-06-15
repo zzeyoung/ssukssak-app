@@ -9,7 +9,7 @@ class BlurService {
   /// true  → 흐림,  false → 선명
   static Future<bool> isBlur(
     File file, {
-    double threshold = 500.0, // 컷오프 분산값
+    double threshold = 150.0, // 컷오프 분산값
     int sampleSize = 512, // 다운샘플 가로 크기
   }) {
     return compute<_Req, bool>(

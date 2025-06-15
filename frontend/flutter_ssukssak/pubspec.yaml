@@ -45,6 +45,8 @@ dependencies:
   permission_handler: ^11.3.1
   exif: ^3.3.0
   intl: ^0.20.2
+  pool: ^1.5.1
+  collection: ^1.18.0
 
 
  
@@ -74,7 +76,6 @@ flutter:
     - assets/images/logo.png
     - assets/images/login_background.png
     - assets/ai/meta_model_float32.tflite
-    - assets/ai/mobileclip_image_nhwc.tflite
     - assets/ai/yolo11n_float32.tflite
     - assets/labels/coco.txt
     - assets/labels/tb512.json

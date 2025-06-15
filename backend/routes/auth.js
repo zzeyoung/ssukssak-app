@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { signup } = require('../controllers/authController');
+const jwt = require('jsonwebtoken');
+
+const { signup, logout } = require('../controllers/authController');
 const { verifyToken } = require('../middlewares/authMiddleware');
-const { logout } = require('../controllers/authController');
+const { exchangeCodeForToken } = require('../services/cognitoService');
+const { createUser } = require('../services/userService'); // 유저 생성 유틸
 
 /**
  * @swagger
@@ -66,19 +69,79 @@ router.post('/signup', signup);
  *         description: 인증 실패 (토큰 누락 또는 유효하지 않음)
  */
 router.get('/me', verifyToken, (req, res) => {
+  const { sub, email, name } = req.user;
   res.json({
-    message: '토큰 인증 성공!',
-    user: req.user,
+    userId: sub,     // ⭐ 여기를 추가
+    email,
+    name,
   });
 });
 
-// 🔁 구글 로그인 등 OAuth 리디렉션 처리 (필요 없다면 삭제 가능)
-router.get('/callback', (req, res) => {
-  res.send('OAuth 콜백 처리 라우트 (미구현)');
+/**
+ * @swagger
+ * /auth/callback:
+ *   get:
+ *     summary: Google OAuth 콜백
+ *     description: Google 로그인 후 리디렉션된 콜백을 처리합니다.
+ *     tags:
+ *       - Auth
+ *     parameters:
+ *       - name: code
+ *         in: query
+ *         required: true
+ *         description: 구글 OAuth 인가 코드
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: 로그인 성공 및 사용자 정보 반환
+ *       400:
+ *         description: 잘못된 요청
+ *       500:
+ *         description: 서버 오류
+ */
+router.get('/callback', async (req, res) => {
+  const { code } = req.query;
+
+  if (!code) {
+    return res.status(400).json({ message: '❌ code 파라미터가 없습니다.' });
+  }
+
+  try {
+    // 1. 코드 → 토큰 교환
+    const tokenData = await exchangeCodeForToken(code);
+
+    // 2. id_token 디코딩
+    const decoded = jwt.decode(tokenData.id_token);
+
+    // 3. 사용자 정보 저장 (없는 경우 생성)
+    await createUser({
+      userId: decoded.sub,
+      email: decoded.email,
+      nickname: decoded.name || `User-${decoded.sub.slice(0, 6)}`,
+      picture: decoded.picture || null,
+      provider: 'google',
+    });
+
+    // 4. 결과 반환 (또는 프론트 리디렉션 가능)
+    res.status(200).json({
+      message: '✅ OAuth 로그인 성공',
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expires_in: tokenData.expires_in,
+      user: {
+        sub: decoded.sub,
+        email: decoded.email,
+        name: decoded.name,
+        picture: decoded.picture,
+      },
+    });
+  } catch (err) {
+    console.error('🛑 OAuth 콜백 처리 오류:', err.response?.data || err.message);
+    res.status(500).json({ message: '서버 오류', detail: err.message });
+  }
 });
 
-// routes/auth.js
 router.post('/logout', logout);
-
 
 module.exports = router;

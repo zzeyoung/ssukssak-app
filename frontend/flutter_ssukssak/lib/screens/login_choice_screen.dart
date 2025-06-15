@@ -1,12 +1,9 @@
-// lib/screens/login_choice_screen.dart
-
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uni_links/uni_links.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:async';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../services/auth_service.dart';
 
 class LoginChoiceScreen extends StatefulWidget {
   const LoginChoiceScreen({Key? key}) : super(key: key);
@@ -16,7 +13,6 @@ class LoginChoiceScreen extends StatefulWidget {
 }
 
 class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
-  final String backendBaseUrl = 'http://10.0.2.2:3000';
   final String cognitoLoginUrl =
       'https://ap-southeast-2cnp2bd9aj.auth.ap-southeast-2.amazoncognito.com/login'
       '?client_id=h2e9vnf4jcd26m4aapifu9dq1'
@@ -32,73 +28,34 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
     _listenForRedirect();
   }
 
+  /* ─────────── 딥링크 수신 ─────────── */
   void _listenForRedirect() {
     _sub = uriLinkStream.listen((Uri? uri) async {
-      if (uri != null && uri.scheme == 'ssukssak' && uri.host == 'callback') {
-        final code = uri.queryParameters['code'];
-        debugPrint('✅ 받은 code: $code');
-        if (code != null) {
-          final success = await _sendCodeToBackend(code);
-          if (success) {
-            debugPrint('🎉 로그인 성공');
-            await _getUserInfo();
-            // 로그인 후 원하는 화면으로 이동할 수 있음
-          } else {
-            debugPrint('❌ 로그인 실패');
-          }
+      if (uri?.scheme == 'ssukssak' && uri?.host == 'callback') {
+        final code = uri?.queryParameters['code'];
+        if (code == null) return;
+
+        final ok = await AuthService.handleCognitoCode(code);
+        if (!ok) {
+          debugPrint('❌ 토큰 저장 실패');
+          return;
+        }
+        final me = await AuthService.fetchMe();
+        if (me == null) {
+          debugPrint('❌ /auth/me 실패');
+          return;
+        }
+        debugPrint('🎉 로그인 완료 userId=${me['userId']}');
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/home');
         }
       }
     }, onError: (err) {
-      debugPrint('❌ 딥링크 수신 오류: $err');
+      debugPrint('❌ 딥링크 오류: $err');
     });
   }
 
-  Future<bool> _sendCodeToBackend(String code) async {
-    try {
-      final uri = Uri.parse('$backendBaseUrl/auth/callback?code=$code');
-      final response = await http.get(uri);
-      debugPrint('🌐 응답코드: ${response.statusCode}');
-      debugPrint('🌐 응답본문: ${response.body}');
-      if (response.statusCode == 200) {
-        final jsonMap = jsonDecode(response.body);
-        final accessToken = jsonMap['access_token'];
-        if (accessToken != null) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('access_token', accessToken);
-          debugPrint('✅ access token 저장됨');
-          return true;
-        } else {
-          debugPrint('❌ access_token 없음');
-          return false;
-        }
-      } else {
-        return false;
-      }
-    } catch (e) {
-      debugPrint('❌ 예외 발생: $e');
-      return false;
-    }
-  }
-
-  Future<void> _getUserInfo() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('access_token');
-      if (token == null) {
-        debugPrint('❌ 저장된 토큰 없음');
-        return;
-      }
-      final response = await http.get(
-        Uri.parse('$backendBaseUrl/auth/me'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-      debugPrint('👤 사용자 정보: ${response.statusCode} / ${response.body}');
-      // 로그인 성공 후, 홈 화면으로 이동하거나 원하는 흐름 구현
-    } catch (e) {
-      debugPrint('❌ 사용자 정보 요청 실패: $e');
-    }
-  }
-
+  /* ─────────── Google 로그인 버튼 ─────────── */
   void _loginWithGoogle() async {
     final uri = Uri.parse(cognitoLoginUrl);
     try {
@@ -108,9 +65,7 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
     }
   }
 
-  void _goToEmailLogin(BuildContext context) {
-    Navigator.pushNamed(context, '/email-login');
-  }
+  void _goToEmailLogin() => Navigator.pushNamed(context, '/email-login');
 
   @override
   void dispose() {
@@ -167,7 +122,7 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
                     ),
                     const SizedBox(height: 16),
                     ElevatedButton(
-                      onPressed: () => _goToEmailLogin(context),
+                      onPressed: _goToEmailLogin,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF009688),
                         foregroundColor: Colors.white,
@@ -183,9 +138,8 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
                     ),
                     const SizedBox(height: 32),
                     ElevatedButton(
-                      onPressed: () {
-                        Navigator.pushNamed(context, '/photoAnalyzer');
-                      },
+                      onPressed: () =>
+                          Navigator.pushNamed(context, '/photoAnalyzer'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blueAccent,
                         foregroundColor: Colors.white,
@@ -201,14 +155,13 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      "※ 테스트용: 로그인 없이 AI 분석 페이지로 넘어갑니다.",
+                      "※ 테스트용: 로그인 없이 AI 분석 페이지로 이동합니다.",
                       style: TextStyle(fontSize: 12, color: Colors.grey),
                       textAlign: TextAlign.center,
                     ),
                     ElevatedButton(
-                      onPressed: () {
-                        Navigator.pushNamed(context, '/metadata-debug');
-                      },
+                      onPressed: () =>
+                          Navigator.pushNamed(context, '/metadata-debug'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.deepPurple,
                         foregroundColor: Colors.white,
