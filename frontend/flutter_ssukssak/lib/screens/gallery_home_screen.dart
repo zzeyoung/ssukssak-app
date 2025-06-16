@@ -30,6 +30,7 @@ import 'trash_screen.dart';
 import 'remind_screen.dart';
 import 'memory_screen.dart';
 import 'environment_report_screen.dart';
+import 'screenshot_tab.dart'; // 🆕 스크린샷 탭 위젯
 
 class GallerySyncHomeScreen extends StatefulWidget {
   const GallerySyncHomeScreen({Key? key}) : super(key: key);
@@ -57,7 +58,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
   late TabController _tabController;
   int _selectedTabIndex = 0;
 
-  // 스크린샷 탭
+  // 스크린샷 탭(내부 전용 상태 – 기존 코드 그대로 둠)
   final _screenshotCategories = ['전체', '탑승권', '쿠폰', '쇼핑', '위치'];
   String _selectedScreenshotCategory = '전체';
   final _screenshotPhotos = <Map<String, dynamic>>[];
@@ -157,7 +158,6 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     final dedupe = GalleryDedupeService(maxConcurrent: 4);
     final groupMap = await dedupe.analyzeGallery(
       similarThreshold: 0.65,
-      onlyCompareNewAssets: newAssets,
     );
     dedupe.dispose();
 
@@ -212,10 +212,13 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
       } catch (_) {}
     }
 
-    bool blur = await BlurService.isBlur(file);
+    final isScreenshot = name.toLowerCase().contains('screenshot');
+
+    bool? blur;
     double? score;
     List<String>? labels;
-    if (_aiReady) {
+    if (!isScreenshot && _aiReady) {
+      blur = await BlurService.isBlur(file);
       final raw = img.decodeImage(await file.readAsBytes());
       if (raw != null) {
         score = await ScoreService().predictScore(raw);
@@ -228,10 +231,12 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
       latitude: lat,
       longitude: lng,
       size: size,
-      analysisTags: {'ai_score': score, 'blurry': blur ? 1 : 0},
-      screenshot: name.toLowerCase().contains('screenshot') ? 1 : 0,
-      imageTags: labels,
-      groupId: groupId,
+      analysisTags: isScreenshot
+          ? {}
+          : {'ai_score': score, 'blurry': (blur ?? false) ? 1 : 0},
+      screenshot: isScreenshot ? 1 : 0,
+      imageTags: isScreenshot ? null : labels,
+      groupId: isScreenshot ? null : groupId,
       sourceApp: _extractSourceApp(name),
       dateTaken: a.createDateTime,
     );
@@ -262,7 +267,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     return 0.0;
   }
 
-/* ────────── 폴더 분류 ────────── */
+  /* ────────── 폴더 분류 ────────── */
   Map<String, List<Map<String, dynamic>>> _folderMap() {
     final map = {
       '중복된 사진': <Map<String, dynamic>>[],
@@ -288,7 +293,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     return map;
   }
 
-/* ────────── 라벨 → 타입 매핑 (변경 없음) ────────── */
+  /* ────────── 라벨 → 타입 매핑 (변경 없음) ────────── */
   String _labelToType(String label) {
     switch (label) {
       case '중복된 사진':
@@ -338,6 +343,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
                 ? TabBarView(
                     controller: _tabController,
                     children: [
+                      /* ── 0️⃣ 폴더 그리드 ── */
                       Padding(
                         padding: const EdgeInsets.all(16),
                         child: GridView.count(
@@ -350,7 +356,8 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
                               .toList(),
                         ),
                       ),
-                      _buildScreenshotTab(),
+                      /* ── 1️⃣ 스크린샷 ── */
+                      ScreenshotTab(),
                     ],
                   )
                 : const EnvironmentReportScreen(), // 다른 탭 생략
@@ -423,8 +430,8 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     );
   }
 
-  /* ── 스크린샷 탭 (생략) ── */
-  Widget _buildScreenshotTab() => const Center(child: Text('스크린샷 탭 준비 중'));
+  /* ── 스크린샷 탭(플레이스홀더 → 실제 위젯 호출) ── */
+  Widget _buildScreenshotTab() => ScreenshotTab();
 
   /* ── 기타 헬퍼 ── */
   String? _extractSourceApp(String fn) {

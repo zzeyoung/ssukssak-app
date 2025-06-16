@@ -118,7 +118,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final dedupeSvc = GalleryDedupeService(maxConcurrent: 4);
     final groupMap = await dedupeSvc.analyzeGallery(
       similarThreshold: 0.65,
-      onlyCompareNewAssets: newAssets,
     );
     dedupeSvc.dispose();
 

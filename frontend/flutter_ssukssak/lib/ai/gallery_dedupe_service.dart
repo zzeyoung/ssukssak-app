@@ -40,9 +40,8 @@ class GalleryDedupeService {
 
   /// 같은 날짜별로만 해시 계산 → 중복/유사 판단
   Future<Map<String, String>> analyzeGallery({
-    double similarThreshold = 0.6,
-    int dupMaxDist = 2,
-    List<AssetEntity>? onlyCompareNewAssets, // ✅ 신규 비교 기준 추가
+    double similarThreshold = 0.6, // 0.0 ~ 1.0, 낮을수록 더 느슨
+    int dupMaxDist = 2, // aHash 완전 중복 최대 허밍 거리
   }) async {
     // 1) 전체 이미지 수집
     final paths = await PhotoManager.getAssetPathList(
@@ -52,7 +51,7 @@ class GalleryDedupeService {
     if (paths.isEmpty) return {};
     final allAssets = await _collectAssets(paths.first);
 
-    // 2) 날짜별 그룹핑
+    // 2) 날짜별(YYYY-MM-DD)로 묶기
     final byDate = <String, List<AssetEntity>>{};
     for (final asset in allAssets) {
       final d = asset.createDateTime;
@@ -61,21 +60,12 @@ class GalleryDedupeService {
       byDate.putIfAbsent(key, () => []).add(asset);
     }
 
-    // ✅ 신규 기준 날짜만 필터링 (없으면 전체 유지)
-    final Set<String>? compareDates = onlyCompareNewAssets != null
-        ? onlyCompareNewAssets.map((a) {
-            final d = a.createDateTime;
-            return "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-          }).toSet()
-        : null;
-
     final result = <String, String>{};
-    final dates = byDate.entries
-        .where((e) => compareDates == null || compareDates.contains(e.key))
-        .toList();
+    final dates = byDate.entries.toList();
     final totalDates = dates.length;
     int dateCount = 0;
 
+    // 3) 날짜별로만 해시 계산 및 그룹핑
     for (final entry in dates) {
       final dateKey = entry.key;
       final assets = entry.value;
@@ -83,38 +73,26 @@ class GalleryDedupeService {
       _progress.add((dateCount / totalDates) * 0.9);
 
       if (assets.length < 2) continue;
-
       final entries = await _computeHashes(assets, (_) {});
-
-      // ✅ 기준 자산만 지정
-      final Set<String>? targetIds = onlyCompareNewAssets != null
-          ? onlyCompareNewAssets.map((e) => e.id).toSet()
-          : null;
 
       // 3-1) 완전 중복 (aHash)
       final dups = _duplicates(entries, dupMaxDist);
       for (final group in dups) {
-        if (targetIds == null ||
-            group.any((e) => targetIds.contains(e.asset.id))) {
-          final hex = group.first.aHash.toRadixString(16);
-          final id = 'd_${dateKey}_$hex';
-          for (final e in group) {
-            result[e.asset.id] = id;
-          }
+        final hex = group.first.aHash.toRadixString(16);
+        final id = 'd_${dateKey}_$hex';
+        for (final e in group) {
+          result[e.asset.id] = id;
         }
       }
 
-      // 3-2) 유사 (pHash/dHash/hist)
+      // 3-2) 유사 (pHash OR dHash OR histogram)
       final maxDist = (hashSize * hashSize * (1 - similarThreshold)).round();
       final sims = _similars(entries, dups, maxDist);
       for (final group in sims) {
-        if (targetIds == null ||
-            group.any((e) => targetIds.contains(e.asset.id))) {
-          final firstId = group.first.asset.id;
-          final id = 's_${dateKey}_$firstId';
-          for (final e in group) {
-            result[e.asset.id] = id;
-          }
+        final firstId = group.first.asset.id;
+        final id = 's_${dateKey}_$firstId';
+        for (final e in group) {
+          result[e.asset.id] = id;
         }
       }
     }

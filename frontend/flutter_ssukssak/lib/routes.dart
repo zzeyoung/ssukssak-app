@@ -8,6 +8,7 @@ import 'screens/metadata_debug_screen.dart';
 import 'screens/home_screen.dart'; // 홈 화면
 import 'package:flutter_ssukssak/screens/prompt_select_screen.dart';
 import 'package:flutter_ssukssak/screens/gallery_home_screen.dart';
+//import 'package:flutter_ssukssak/features/gallery_sync/gallery_sync_home_screen.dart';
 
 /// 앱 내 모든 경로를 정의하는 Map.
 /// 기존에 로그인/이메일 로그인 경로에 더해, AI 모델 화면 경로를 추가합니다.
