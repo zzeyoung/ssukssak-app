@@ -3,10 +3,10 @@
 // • 완전 중복(dN): aHash 동일
 // • 유사(sN): pHash, dHash, 또는 색상 히스토그램 χ² 거리 기준
 // • 같은 날짜별(YYYY-MM-DD)로만 그룹핑
+// • 그룹 ID는 날짜 및 해시/Asset ID 기반으로 결정론적 생성
 // -----------------------------------------------------------
 
 import 'dart:async';
-import 'dart:developer';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -40,8 +40,9 @@ class GalleryDedupeService {
 
   /// 같은 날짜별로만 해시 계산 → 중복/유사 판단
   Future<Map<String, String>> analyzeGallery({
-    double similarThreshold = 0.6, // 0.0 ~ 1.0, 낮을수록 더 느슨
-    int dupMaxDist = 2, // aHash 완전 중복 최대 허밍 거리
+    double similarThreshold = 0.6,
+    int dupMaxDist = 2,
+    List<AssetEntity>? onlyCompareNewAssets, // ✅ 신규 비교 기준 추가
   }) async {
     // 1) 전체 이미지 수집
     final paths = await PhotoManager.getAssetPathList(
@@ -51,7 +52,7 @@ class GalleryDedupeService {
     if (paths.isEmpty) return {};
     final allAssets = await _collectAssets(paths.first);
 
-    // 2) 날짜별(YYYY-MM-DD)로 묶기
+    // 2) 날짜별 그룹핑
     final byDate = <String, List<AssetEntity>>{};
     for (final asset in allAssets) {
       final d = asset.createDateTime;
@@ -60,32 +61,61 @@ class GalleryDedupeService {
       byDate.putIfAbsent(key, () => []).add(asset);
     }
 
+    // ✅ 신규 기준 날짜만 필터링 (없으면 전체 유지)
+    final Set<String>? compareDates = onlyCompareNewAssets != null
+        ? onlyCompareNewAssets.map((a) {
+            final d = a.createDateTime;
+            return "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+          }).toSet()
+        : null;
+
     final result = <String, String>{};
-    int dIndex = 1, sIndex = 1;
-    final totalDates = byDate.length;
+    final dates = byDate.entries
+        .where((e) => compareDates == null || compareDates.contains(e.key))
+        .toList();
+    final totalDates = dates.length;
     int dateCount = 0;
 
-    // 3) 날짜별로만 해시 계산 및 그룹핑
-    for (final assets in byDate.values) {
+    for (final entry in dates) {
+      final dateKey = entry.key;
+      final assets = entry.value;
       dateCount++;
       _progress.add((dateCount / totalDates) * 0.9);
 
       if (assets.length < 2) continue;
+
       final entries = await _computeHashes(assets, (_) {});
+
+      // ✅ 기준 자산만 지정
+      final Set<String>? targetIds = onlyCompareNewAssets != null
+          ? onlyCompareNewAssets.map((e) => e.id).toSet()
+          : null;
 
       // 3-1) 완전 중복 (aHash)
       final dups = _duplicates(entries, dupMaxDist);
       for (final group in dups) {
-        final id = 'd${dIndex++}';
-        for (final e in group) result[e.asset.id] = id;
+        if (targetIds == null ||
+            group.any((e) => targetIds.contains(e.asset.id))) {
+          final hex = group.first.aHash.toRadixString(16);
+          final id = 'd_${dateKey}_$hex';
+          for (final e in group) {
+            result[e.asset.id] = id;
+          }
+        }
       }
 
-      // 3-2) 유사 (pHash OR dHash OR histogram)
+      // 3-2) 유사 (pHash/dHash/hist)
       final maxDist = (hashSize * hashSize * (1 - similarThreshold)).round();
       final sims = _similars(entries, dups, maxDist);
       for (final group in sims) {
-        final id = 's${sIndex++}';
-        for (final e in group) result[e.asset.id] = id;
+        if (targetIds == null ||
+            group.any((e) => targetIds.contains(e.asset.id))) {
+          final firstId = group.first.asset.id;
+          final id = 's_${dateKey}_$firstId';
+          for (final e in group) {
+            result[e.asset.id] = id;
+          }
+        }
       }
     }
 
@@ -110,7 +140,6 @@ class GalleryDedupeService {
       List<AssetEntity> assets, void Function(int) onDone) async {
     final pool = Pool(maxConcurrent);
     int done = 0;
-
     final tasks = assets.map((asset) => pool.withResource(() async {
           try {
             final bytes = await asset
@@ -130,7 +159,6 @@ class GalleryDedupeService {
             onDone(++done);
           }
         }));
-
     final list = (await Future.wait(tasks)).whereType<_HashEntry>().toList();
     await pool.close();
     return list;
@@ -142,7 +170,6 @@ class GalleryDedupeService {
   List<List<_HashEntry>> _duplicates(List<_HashEntry> all, int dupMaxDist) {
     final buckets = <BigInt, List<_HashEntry>>{};
     for (final e in all) {
-      // exact match 만 묶음 (dupMaxDist는 무시)
       buckets.putIfAbsent(e.aHash, () => []).add(e);
     }
     return buckets.values.where((g) => g.length > 1).toList();
@@ -180,9 +207,8 @@ class GalleryDedupeService {
     return res;
   }
 
-  // ── 해시 함수 ──
+  // ── 해시 함수 및 기타 유틸 ──
 
-  /// average hash
   BigInt _aHash(img.Image src) {
     final gray = img.grayscale(src);
     final small = img.copyResize(gray,
@@ -205,7 +231,6 @@ class GalleryDedupeService {
     return bits;
   }
 
-  /// difference hash (horizontal)
   BigInt _dHash(img.Image src) {
     final gray = img.grayscale(src);
     final w = hashSize + 1, h = hashSize;
@@ -223,7 +248,6 @@ class GalleryDedupeService {
     return bits;
   }
 
-  /// rotation-invariant pHashes (0°,90°,180°,270°)
   List<BigInt> _rotationInvariantPHashes(img.Image src) {
     const angles = [0, 90, 180, 270];
     return angles.map((a) {
@@ -232,21 +256,18 @@ class GalleryDedupeService {
     }).toList();
   }
 
-  /// perceptual hash (DCT 기반)
   BigInt _pHash(img.Image src) {
     const N = 32;
     final gray = img.grayscale(src);
     final resized = img.copyResize(gray,
         width: N, height: N, interpolation: img.Interpolation.average);
 
-    // 2D 배열로 변환
     final f = List.generate(
         N,
         (y) => List<double>.generate(
             N, (x) => (resized.getPixel(x, y) & 0xFF).toDouble()));
-
-    // DCT 변환
     final F = List.generate(N, (_) => List<double>.filled(N, 0.0));
+
     for (int u = 0; u < N; u++) {
       for (int v = 0; v < N; v++) {
         double sum = 0;
@@ -263,7 +284,6 @@ class GalleryDedupeService {
       }
     }
 
-    // 상위 hashSize×hashSize 영역에서 평균 기준 비트화
     final vals = <double>[];
     for (int y = 0; y < hashSize; y++) {
       for (int x = 0; x < hashSize; x++) {
@@ -271,6 +291,7 @@ class GalleryDedupeService {
         vals.add(F[y][x]);
       }
     }
+
     final sorted = List<double>.from(vals)..sort();
     final med = sorted[sorted.length ~/ 2];
 
@@ -281,9 +302,6 @@ class GalleryDedupeService {
     return bits;
   }
 
-  // ── 히스토그램 함수 ──
-
-  /// 그레이스케일 히스토그램
   List<int> _histogram(img.Image src, int bins) {
     final gray = img.grayscale(src);
     final hist = List<int>.filled(bins, 0);
@@ -298,7 +316,6 @@ class GalleryDedupeService {
     return hist;
   }
 
-  /// χ² 거리 계산
   double _chiSquare(List<int> h1, List<int> h2) {
     var sum = 0.0;
     for (int i = 0; i < h1.length; i++) {
@@ -308,9 +325,6 @@ class GalleryDedupeService {
     return sum;
   }
 
-  // ── 공통 유틸 ──
-
-  /// 해밍 거리 계산
   int _ham(BigInt a, BigInt b) {
     BigInt d = a ^ b;
     int c = 0;
@@ -321,7 +335,6 @@ class GalleryDedupeService {
     return c;
   }
 
-  /// 리스트 간 최소 해밍 거리
   int _minHamming(List<BigInt> a, List<BigInt> b) {
     int minDist = 1 << 30;
     for (final ah in a) {

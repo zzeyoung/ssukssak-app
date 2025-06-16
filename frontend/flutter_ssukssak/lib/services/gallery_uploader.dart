@@ -34,7 +34,7 @@ class GalleryUploader {
         headers: {'Content-Type': 'application/json'},
         body: body,
       );
-      if (res.statusCode != 200) {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
         throw Exception('Upload failed (${res.statusCode}): ${res.body}');
       }
       onProgress?.call((i + slice.length) / total);

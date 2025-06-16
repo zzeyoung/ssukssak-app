@@ -1,8 +1,12 @@
 const express = require('express');
-const { uploadGalleryMetadata } = require('../controllers/photoController');
+const { uploadGalleryMetadata,
+  getGalleryMetadata,
+getCleanCandidates,  } = require('../controllers/photoController');
 const router = express.Router();
 
 router.post('/metadata', uploadGalleryMetadata);
+router.get('/metadata', getGalleryMetadata);  
+router.get ('/candidates', getCleanCandidates);
 
 module.exports = router;
 // swagger

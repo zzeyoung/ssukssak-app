@@ -47,7 +47,8 @@ class _LoginChoiceScreenState extends State<LoginChoiceScreen> {
         }
         debugPrint('🎉 로그인 완료 userId=${me['userId']}');
         if (mounted) {
-          Navigator.pushReplacementNamed(context, '/home');
+          Navigator.pushReplacementNamed(context, '/gallery',
+              arguments: me['userId']);
         }
       }
     }, onError: (err) {
