@@ -13,8 +13,8 @@ const ddb = DynamoDBDocumentClient.from(client);
 exports.addToTrash = async (req, res) => {
   const { userId, photoId, source, tags = [], score = 0 } = req.body;
 
-  if (!userId || !photoId || !source) {
-    return res.status(400).json({ message: '❌ userId, photoId, source는 필수입니다.' });
+  if (!userId || !photoId ) {
+    return res.status(400).json({ message: '❌ userId, photoId는 필수입니다.' });
   }
 
   const item = {

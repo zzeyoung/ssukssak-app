@@ -1,4 +1,5 @@
 // lib/screens/gallery_list_screen.dart
+
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
@@ -9,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:photo_manager/photo_manager.dart';
 
 import '../globals.dart';
+import 'trash_screen.dart';
 
 class GalleryListScreen extends StatefulWidget {
   final String folderName; // UI 라벨
@@ -27,32 +29,33 @@ class GalleryListScreen extends StatefulWidget {
 }
 
 class _GalleryListScreenState extends State<GalleryListScreen> {
-  static const _endpoint = 'http://172.31.81.175:3000';
+  static const String _endpoint = 'http://172.31.81.175:3000';
 
-  /// key → list<photo>
   Map<String, List<Map<String, dynamic>>> _sections = {};
+  final Set<String> _trashed = {};
+  final Set<String> _selected = {};
   bool _loading = true;
-  final _selected = <String>{};
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadAll();
   }
 
-  /* ────────── 메인 로드 ────────── */
-  Future<void> _load() async {
+  Future<void> _loadAll() async {
     try {
       final secs = await _fetchCandidates();
       await _attachLocalPaths(secs);
-      if (mounted) {
-        setState(() {
-          _sections = secs;
-          _loading = false;
-        });
-      }
+      await _loadTrashed();
+      _filterTrashed(secs);
+
+      if (!mounted) return;
+      setState(() {
+        _sections = secs;
+        _loading = false;
+      });
     } catch (e, st) {
-      log('load error: $e\n$st');
+      log('loadAll error: $e\n$st');
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('데이터 로드 실패')));
@@ -61,7 +64,6 @@ class _GalleryListScreenState extends State<GalleryListScreen> {
     }
   }
 
-  /* ────────── 1. 서버 호출 ────────── */
   Future<Map<String, List<Map<String, dynamic>>>> _fetchCandidates() async {
     final prefs = await SharedPreferences.getInstance();
     final uid = prefs.getString('user_id')!;
@@ -85,14 +87,13 @@ class _GalleryListScreenState extends State<GalleryListScreen> {
     final uri =
         Uri.parse('$_endpoint/photos/candidates').replace(queryParameters: qp);
     final res = await http.get(uri);
-    if (res.statusCode != 200) throw Exception(res.statusCode);
+    if (res.statusCode != 200) throw Exception('Status ${res.statusCode}');
 
-    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    final jsonMap = jsonDecode(res.body) as Map<String, dynamic>;
     final secs = <String, List<Map<String, dynamic>>>{};
 
-    /* ── duplicate → 날짜별 ── */
     if (widget.type == 'duplicate') {
-      final groups = (json['duplicateGroups'] ?? {}) as Map<String, dynamic>;
+      final groups = (jsonMap['duplicateGroups'] ?? {}) as Map<String, dynamic>;
       for (final g in groups.values) {
         for (final it in (g as List).cast<Map<String, dynamic>>()) {
           final dt = DateTime.parse(it['dateTaken']);
@@ -102,83 +103,161 @@ class _GalleryListScreenState extends State<GalleryListScreen> {
         }
       }
       return Map.fromEntries(
-          secs.entries.toList()..sort((b, a) => a.key.compareTo(b.key)));
+        secs.entries.toList()..sort((b, a) => a.key.compareTo(b.key)),
+      );
     }
 
-    /* ── similar → 그룹 ID별 ── */
     if (widget.type == 'similar') {
-      final groups = (json['similarGroups'] ?? {}) as Map<String, dynamic>;
-      int idx = 1;
+      final groups = (jsonMap['similarGroups'] ?? {}) as Map<String, dynamic>;
       for (final entry in groups.entries) {
-        secs['그룹 $idx'] = (entry.value as List).cast<Map<String, dynamic>>();
-        idx++;
+        secs[entry.key] = (entry.value as List).cast<Map<String, dynamic>>();
       }
       return secs;
     }
 
-    /* ── blurry / score → json['photos'] or json['items'] ── */
-    final arr = (json['photos'] ??
-        json['items'] ??
-        json['Photos'] ?? // 혹시 대문자
+    final arr = (jsonMap['photos'] ??
+        jsonMap['items'] ??
+        jsonMap['Photos'] ??
         []) as List<dynamic>;
-
     for (final it in arr.cast<Map<String, dynamic>>()) {
       final dt = DateTime.parse(it['dateTaken']);
       final key =
           '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
       secs.putIfAbsent(key, () => []).add(it);
     }
-
     return Map.fromEntries(
-        secs.entries.toList()..sort((b, a) => a.key.compareTo(b.key)));
+      secs.entries.toList()..sort((b, a) => a.key.compareTo(b.key)),
+    );
   }
 
-  /* ────────── 2. 로컬 경로 매핑 ────────── */
+  /// 최적화된 AssetEntity → 파일 경로 매핑
   Future<void> _attachLocalPaths(
       Map<String, List<Map<String, dynamic>>> data) async {
     final albums = await PhotoManager.getAssetPathList(type: RequestType.image);
     if (albums.isEmpty) return;
     final root = albums.first;
-    final assets =
-        await root.getAssetListRange(start: 0, end: await root.assetCountAsync);
+    final assetCount = await root.assetCountAsync;
+    final assets = await root.getAssetListRange(start: 0, end: assetCount);
 
+    // 1. AssetEntity의 title(파일명) 기반으로 lookup 테이블 생성 (비동기 없음, 매우 빠름)
     final lookup = <String, AssetEntity>{};
     for (final a in assets) {
-      final f = await a.originFile;
-      if (f != null) lookup[f.uri.pathSegments.last.toLowerCase()] = a;
+      final title = a.title?.toLowerCase();
+      if (title != null) lookup[title] = a;
     }
 
+    // 2. 서버에서 받은 photoId와 매핑
     for (final list in data.values) {
       for (final p in list) {
-        final a = lookup[(p['photoId'] as String).toLowerCase()];
+        final id = (p['photoId'] as String).toLowerCase();
+        final a = lookup[id];
         if (a != null) {
+          // originFile은 실제 파일 경로가 필요할 때만 await로 접근
           final file = await a.originFile;
           if (file != null) p['localPath'] = file.path;
         }
       }
     }
+
+    // 만약 title이 photoId와 항상 일치하지 않는다면 아래 주석 참고
+    /*
+    // 병렬로 originFile을 가져와서 lookup 테이블 생성 (느릴 수 있으나, 병렬화로 개선)
+    final pairs = await Future.wait(assets.map((a) async {
+      final f = await a.originFile;
+      return f != null
+          ? MapEntry(f.uri.pathSegments.last.toLowerCase(), a)
+          : null;
+    }));
+    final lookup = <String, AssetEntity>{
+      for (final e in pairs)
+        if (e != null) e.key: e.value,
+    };
+    */
   }
 
-  /* ────────── 삭제 → 휴지통 ────────── */
-  void _deleteSel() {
-    trashBin.addAll(_selected);
+  Future<void> _loadTrashed() async {
+    final prefs = await SharedPreferences.getInstance();
+    final uid = prefs.getString('user_id')!;
+    final uri = Uri.parse('$_endpoint/trash/$uid');
+    final res = await http.get(uri);
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final items = (body['items'] as List<dynamic>?) ?? [];
+      _trashed
+        ..clear()
+        ..addAll(items.map((e) => e['photoId'] as String));
+    } else {
+      log('휴지통 조회 실패: ${res.statusCode}');
+    }
+  }
+
+  void _filterTrashed(Map<String, List<Map<String, dynamic>>> secs) {
+    for (final list in secs.values) {
+      list.removeWhere((p) => _trashed.contains(p['photoId']));
+    }
+  }
+
+  Future<void> _deleteSel() async {
+    final prefs = await SharedPreferences.getInstance();
+    final uid = prefs.getString('userId')!;
+
+    for (final photoId in _selected) {
+      try {
+        final uri = Uri.parse('http://172.31.81.175:3000/trash');
+        final res = await http.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'userId': uid,
+            'photoId': photoId,
+          }),
+        );
+        if (res.statusCode == 200) {
+          _trashed.add(photoId);
+        } else {
+          log('❌ 휴지통 추가 실패(${res.statusCode}): ${res.body}');
+        }
+      } catch (e) {
+        log('🚨 HTTP 예외: $e');
+      }
+    }
+
     setState(() {
-      for (final l in _sections.values) {
-        l.removeWhere((p) => _selected.contains(p['photoId']));
+      for (final list in _sections.values) {
+        list.removeWhere((p) => _selected.contains(p['photoId']));
       }
       _selected.clear();
     });
   }
 
-  /* ────────── UI ────────── */
+  Future<void> _refreshTrashOnly() async {
+    setState(() => _loading = true);
+    await _loadTrashed();
+    _filterTrashed(_sections);
+    setState(() => _loading = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.folderName),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TrashScreen()),
+              );
+              await _refreshTrashOnly();
+            },
+          ),
           if (_selected.isNotEmpty)
-            IconButton(icon: const Icon(Icons.delete), onPressed: _deleteSel),
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: _deleteSel,
+            ),
         ],
       ),
       body: _loading

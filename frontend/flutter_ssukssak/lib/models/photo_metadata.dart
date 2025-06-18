@@ -8,6 +8,7 @@ class AnalyzedPhotoData {
   final Map<String, dynamic>? analysisTags;
   final int? screenshot; // 스크린샷 여부 (1 or 0)
   final List<String>? screenshotTags;
+
   final List<String>? imageTags;
   final String? groupId; // dN / sN
   final String? sourceApp; // 추출된 앱 이름 or null

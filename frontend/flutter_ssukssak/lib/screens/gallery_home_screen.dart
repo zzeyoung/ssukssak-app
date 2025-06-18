@@ -1,6 +1,6 @@
-// lib/screens/gallery_sync_home_screen.dart
+// lib/screens/gallery_home_screen.dart
 // -----------------------------------------------------------
-// 📷 갤러리 동기화 + 폴더 UI 통합 화면
+// 📷 갤러리 동기화 + 폴더 UI 통합 화면  (배경 흰색, 휴지통 아이콘, 썸네일 정사각)
 // -----------------------------------------------------------
 
 import 'dart:convert';
@@ -26,11 +26,11 @@ import '../../ai/yolo_service.dart';
 import '../../ai/gallery_dedupe_service.dart';
 
 import 'photo_list_screen.dart';
-import 'trash_screen.dart';
+import 'trash_screen.dart'; // 🆕 휴지통 화면
 import 'remind_screen.dart';
 import 'memory_screen.dart';
 import 'environment_report_screen.dart';
-import 'screenshot_tab.dart'; // 🆕 스크린샷 탭 위젯
+import 'screenshot_tab.dart';
 
 class GallerySyncHomeScreen extends StatefulWidget {
   const GallerySyncHomeScreen({Key? key}) : super(key: key);
@@ -43,26 +43,28 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     with SingleTickerProviderStateMixin {
   static const _endpoint = 'http://172.31.81.175:3000';
 
-  // 진행 상태
+  /* ── 진행 상태 ── */
   bool _aiReady = false;
   bool _scanning = false;
   bool _uploading = false;
   double _scanProgress = 0;
   double _uploadProgress = 0;
 
-  // 분석/업로드 결과
+  /* ── 분석/업로드 결과 ── */
   final List<AnalyzedPhotoData> _newPhotos = [];
   final List<Map<String, dynamic>> _analyzedPhotos = [];
 
-  // 탭
+  /* ── 탭 컨트롤 ── */
   late TabController _tabController;
   int _selectedTabIndex = 0;
 
-  // 스크린샷 탭(내부 전용 상태 – 기존 코드 그대로 둠)
-  final _screenshotCategories = ['전체', '탑승권', '쿠폰', '쇼핑', '위치'];
-  String _selectedScreenshotCategory = '전체';
-  final _screenshotPhotos = <Map<String, dynamic>>[];
-  final _selectedScreenshotPaths = <String>{};
+  // 🏷️ 폴더별 지정 썸네일(에셋) 경로
+  final Map<String, String> _folderThumbnailMap = {
+    '중복된 사진': 'assets/images/logo.png',
+    '유사한 사진': 'assets/images/logo.png',
+    '흐릿한 사진': 'assets/images/logo.png',
+    '점수기반 사진': 'assets/images/logo.png',
+  };
 
   @override
   void initState() {
@@ -77,14 +79,14 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     await _autoSync();
   }
 
-  /* ────────── AI 모델 ────────── */
+  /* ── AI 모델 로드 ── */
   Future<void> _loadAi() async {
     await ScoreService().loadModel();
     await YoloService().loadModel();
     setState(() => _aiReady = true);
   }
 
-  /* ────────── 자동 동기화 ────────── */
+  /* ── 자동 동기화 ── */
   Future<void> _autoSync() async {
     final prefs = await SharedPreferences.getInstance();
     String? uid = prefs.getString('user_id') ??
@@ -115,7 +117,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     return {};
   }
 
-  /* ────────── 스캔 & 분석 ────────── */
+  /* ── 갤러리 스캔 & 분석 ── */
   Future<void> _scanGallery({required Set<String> skipIds}) async {
     if (_scanning) return;
     _newPhotos.clear();
@@ -146,19 +148,8 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
       allAssets.addAll(await path.getAssetListPaged(page: p, size: pageSize));
     }
 
-    final newAssets = <AssetEntity>[];
-    for (final a in allAssets) {
-      final f = await a.originFile;
-      if (f == null) continue;
-      if (!lowerSkip.contains(f.uri.pathSegments.last.toLowerCase())) {
-        newAssets.add(a);
-      }
-    }
-
     final dedupe = GalleryDedupeService(maxConcurrent: 4);
-    final groupMap = await dedupe.analyzeGallery(
-      similarThreshold: 0.65,
-    );
+    final groupMap = await dedupe.analyzeGallery(similarThreshold: 0.65);
     dedupe.dispose();
 
     int processed = 0;
@@ -233,7 +224,10 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
       size: size,
       analysisTags: isScreenshot
           ? {}
-          : {'ai_score': score, 'blurry': (blur ?? false) ? 1 : 0},
+          : {
+              'ai_score': score,
+              'blurry': (blur ?? false) ? 1 : 0,
+            },
       screenshot: isScreenshot ? 1 : 0,
       imageTags: isScreenshot ? null : labels,
       groupId: isScreenshot ? null : groupId,
@@ -242,7 +236,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     );
   }
 
-  /* ────────── 업로드 ────────── */
+  /* ── 업로드 ── */
   Future<void> _uploadPhotos(String uid) async {
     if (_uploading || _newPhotos.isEmpty) return;
     setState(() => _uploading = true);
@@ -256,7 +250,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     }
   }
 
-  /* ────────── analysisTags 값 → double 변환 헬퍼 ────────── */
+  /* ── analysisTags 값 → double ── */
   double _num(dynamic v) {
     if (v == null) return 0.0;
     if (v is num) return v.toDouble();
@@ -267,7 +261,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     return 0.0;
   }
 
-  /* ────────── 폴더 분류 ────────── */
+  /* ── 폴더 분류 ── */
   Map<String, List<Map<String, dynamic>>> _folderMap() {
     final map = {
       '중복된 사진': <Map<String, dynamic>>[],
@@ -293,7 +287,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     return map;
   }
 
-  /* ────────── 라벨 → 타입 매핑 (변경 없음) ────────── */
+  /* ── 라벨→타입 ── */
   String _labelToType(String label) {
     switch (label) {
       case '중복된 사진':
@@ -309,82 +303,113 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     }
   }
 
-  /* ────────── UI ────────── */
+  /* ── UI ── */
   @override
   Widget build(BuildContext context) {
     final folderMap = _folderMap();
 
-    return Scaffold(
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        title: const Text(''),
-        automaticallyImplyLeading: false,
-        bottom: _selectedTabIndex == 0
-            ? TabBar(
+    final List<Widget> screens = [
+      // 0️⃣ 정리 탭
+      Container(
+        color: Colors.white,
+        child: Column(
+          children: [
+            if (_scanning) LinearProgressIndicator(value: _scanProgress),
+            if (_uploading) LinearProgressIndicator(value: _uploadProgress),
+            Expanded(
+              child: TabBarView(
                 controller: _tabController,
-                labelColor: Colors.black,
-                unselectedLabelColor: Colors.grey,
-                indicatorColor: const Color(0xFF26C485),
-                tabs: const [Tab(text: '촬영 사진'), Tab(text: '스크린샷')],
-              )
-            : null,
+                children: [
+                  // 촬영 사진
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: GridView.count(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      childAspectRatio: 0.83,
+                      children: folderMap.entries
+                          .map((e) => _buildFolderCard(e.key, e.value))
+                          .toList(),
+                    ),
+                  ),
+                  // 스크린샷
+                  const ScreenshotTab(),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-      body: Column(
-        children: [
-          if (_scanning)
-            LinearProgressIndicator(value: _scanProgress, color: Colors.blue),
-          if (_uploading)
-            LinearProgressIndicator(
-                value: _uploadProgress, color: Colors.green),
-          Expanded(
-            child: _selectedTabIndex == 0
-                ? TabBarView(
-                    controller: _tabController,
-                    children: [
-                      /* ── 0️⃣ 폴더 그리드 ── */
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: GridView.count(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
-                          childAspectRatio: 0.85,
-                          children: folderMap.entries
-                              .map((e) => _buildFolderCard(e.key, e.value))
-                              .toList(),
-                        ),
-                      ),
-                      /* ── 1️⃣ 스크린샷 ── */
-                      ScreenshotTab(),
-                    ],
-                  )
-                : const EnvironmentReportScreen(), // 다른 탭 생략
-          ),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedTabIndex,
-        onTap: (i) => setState(() => _selectedTabIndex = i),
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: const Color(0xFF26C485),
-        unselectedItemColor: Colors.black54,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.photo_library), label: '정리'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.insert_chart_outlined), label: '리포트'),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF26C485),
-        onPressed: _autoSync,
-        child: const Icon(Icons.refresh),
+      // 1️⃣ 리마인드
+      const RemindScreen(screenshotPhotos: []),
+      // 2️⃣ 메모리
+      MemoryScreen(),
+      // 3️⃣ 리포트
+      const EnvironmentReportScreen(),
+    ];
+
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          title: const Text(''),
+          automaticallyImplyLeading: false,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '휴지통',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TrashScreen()),
+              ),
+            ),
+          ],
+          bottom: _selectedTabIndex == 0
+              ? TabBar(
+                  controller: _tabController,
+                  labelColor: Colors.black,
+                  unselectedLabelColor: Colors.grey,
+                  indicatorColor: const Color(0xFF26C485),
+                  tabs: const [
+                    Tab(text: '촬영 사진'),
+                    Tab(text: '스크린샷'),
+                  ],
+                )
+              : null,
+        ),
+        body: screens[_selectedTabIndex],
+        bottomNavigationBar: BottomNavigationBar(
+          backgroundColor: Colors.white,
+          currentIndex: _selectedTabIndex,
+          onTap: (i) => setState(() => _selectedTabIndex = i),
+          type: BottomNavigationBarType.fixed,
+          selectedItemColor: const Color(0xFF26C485),
+          unselectedItemColor: Colors.black54,
+          items: const [
+            BottomNavigationBarItem(
+                icon: Icon(Icons.photo_library), label: '정리'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.notifications_none), label: '리마인드'),
+            BottomNavigationBarItem(icon: Icon(Icons.refresh), label: '메모리'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.insert_chart_outlined), label: '리포트'),
+          ],
+        ),
+        floatingActionButton: FloatingActionButton(
+          backgroundColor: const Color(0xFF26C485),
+          onPressed: _autoSync,
+          child: const Icon(Icons.refresh),
+        ),
       ),
     );
   }
 
-  /* ── 폴더 카드 위젯 ── */
+  /* ── 폴더 카드 ── */
   Widget _buildFolderCard(String label, List<Map<String, dynamic>> photos) {
     return GestureDetector(
       onTap: () {
@@ -402,22 +427,14 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
         );
       },
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: photos.isNotEmpty
-                ? Image.file(
-                    File(photos.first['photoId']),
-                    width: double.infinity,
-                    height: 120,
-                    fit: BoxFit.cover,
-                  )
-                : Container(
-                    width: double.infinity,
-                    height: 120,
-                    color: Colors.grey.shade200,
-                    child: const Icon(Icons.image),
-                  ),
+          AspectRatio(
+            aspectRatio: 1,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: _buildThumbnail(label),
+            ),
           ),
           const SizedBox(height: 8),
           Text(label,
@@ -430,10 +447,26 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
     );
   }
 
-  /* ── 스크린샷 탭(플레이스홀더 → 실제 위젯 호출) ── */
-  Widget _buildScreenshotTab() => ScreenshotTab();
+  /// 🏞️ 에셋 썸네일을 보여줍니다
+  Widget _buildThumbnail(String label) {
+    final assetPath = _folderThumbnailMap[label];
+
+    if (assetPath != null) {
+      return Image.asset(
+        assetPath,
+        fit: BoxFit.cover,
+      );
+    }
+
+    // 매핑이 없으면 기본 박스
+    return Container(
+      color: Colors.grey.shade200,
+      child: const Icon(Icons.image),
+    );
+  }
 
   /* ── 기타 헬퍼 ── */
+
   String? _extractSourceApp(String fn) {
     if (!fn.toLowerCase().contains('screenshot')) return null;
     final us = fn.lastIndexOf('_');
@@ -452,7 +485,7 @@ class _GallerySyncHomeScreenState extends State<GallerySyncHomeScreen>
   }
 }
 
-/* ────────── 로딩 다이얼로그 ────────── */
+/* ── 로딩 다이얼로그 ── */
 class _LoadingDialog extends StatelessWidget {
   const _LoadingDialog();
 

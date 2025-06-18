@@ -140,7 +140,17 @@ exports.getGalleryMetadata = async (req, res) => {
  *  - blurry/minScore/screenshot/sourceApp → 일반 후보 (photoId+dateTaken 배열)
  */
 exports.getCleanCandidates = async (req, res) => {
-  const { userId, duplicate, similar, blurry, minScore, screenshot, sourceApp } = req.query;
+  const {
+    userId,
+    duplicate,
+    similar,
+    blurry,
+    minScore,
+    screenshot,
+    sourceApp,
+    imgTag, // ✅ 새로 추가된 필터
+  } = req.query;
+
   if (!userId) return res.status(400).json({ message: 'userId 쿼리 필요' });
 
   // Base query parameters
@@ -148,8 +158,9 @@ exports.getCleanCandidates = async (req, res) => {
     TableName: TABLE_NAME,
     KeyConditionExpression: 'userId = :uid',
     ExpressionAttributeValues: { ':uid': userId },
-    ProjectionExpression: 'photoId, dateTaken, groupId, analysisTags, screenshot, sourceApp',
+    ProjectionExpression: 'photoId, dateTaken, groupId, analysisTags, screenshot, sourceApp, imageTags',
   };
+
   let attributeNames = {};
   const filters = [];
 
@@ -162,29 +173,47 @@ exports.getCleanCandidates = async (req, res) => {
     filters.push('begins_with(groupId, :s)');
     params.ExpressionAttributeValues[':s'] = 's';
   }
+
   // blurry
   if (blurry !== undefined) {
     attributeNames['#tags'] = 'analysisTags';
-    attributeNames['#bl']   = 'blurry';
+    attributeNames['#bl'] = 'blurry';
     params.ExpressionAttributeValues[':b'] = Number(blurry);
     filters.push('#tags.#bl = :b');
   }
+
   // ai_score
   if (minScore !== undefined) {
-    attributeNames['#tags']  = 'analysisTags';
+    attributeNames['#tags'] = 'analysisTags';
     attributeNames['#score'] = 'ai_score';
     params.ExpressionAttributeValues[':s'] = Number(minScore);
     filters.push('#tags.#score <= :s');
   }
+
   // screenshot
   if (screenshot !== undefined) {
     filters.push('screenshot = :ss');
     params.ExpressionAttributeValues[':ss'] = Number(screenshot);
   }
+
   // sourceApp
   if (sourceApp) {
     filters.push('sourceApp = :app');
     params.ExpressionAttributeValues[':app'] = sourceApp;
+  }
+
+  // ✅ imageTags 필터 (복수 태그 OR 조건)
+  if (imgTag) {
+    const tagList = imgTag.split(',').map(tag => tag.trim()).filter(Boolean);
+    if (tagList.length) {
+      attributeNames['#imgTags'] = 'imageTags';
+      const tagFilters = tagList.map((tag, idx) => {
+        const key = `:tag${idx}`;
+        params.ExpressionAttributeValues[key] = tag;
+        return `contains(#imgTags, ${key})`;
+      });
+      filters.push(`(${tagFilters.join(' OR ')})`);
+    }
   }
 
   // only set ExpressionAttributeNames when needed
@@ -204,8 +233,8 @@ exports.getCleanCandidates = async (req, res) => {
     } while (lastKey);
 
     const duplicateGroups = {};
-    const similarGroups   = {};
-    const photoItems      = [];
+    const similarGroups = {};
+    const photoItems = [];
 
     items.forEach(it => {
       const entry = { photoId: it.photoId, dateTaken: it.dateTaken };
@@ -220,8 +249,8 @@ exports.getCleanCandidates = async (req, res) => {
 
     return res.status(200).json({
       duplicateGroups: Object.keys(duplicateGroups).length ? duplicateGroups : undefined,
-      similarGroups:   Object.keys(similarGroups).length   ? similarGroups   : undefined,
-      photos:          photoItems.length                   ? photoItems      : undefined,
+      similarGroups: Object.keys(similarGroups).length ? similarGroups : undefined,
+      photos: photoItems.length ? photoItems : undefined,
     });
   } catch (err) {
     console.error('후보 조회 오류', err);
@@ -240,4 +269,5 @@ GET /photos/candidates?userId=<uid>&similar=1
 
 # 흐릿 + 예쁨 + 스크린샷 + sourceApp 필터
 GET /photos/candidates?userId=<uid>&blurry=1&minScore=0.7&screenshot=1&sourceApp=KakaoTalk
+GET /photos/candidates?userId=abc123&imgTag=dog,cat,chair
 ------------------------------------------------------------*/

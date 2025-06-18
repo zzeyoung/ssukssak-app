@@ -2,10 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../globals.dart';
 
-
 class MemorySwipeScreen extends StatefulWidget {
   final String folderName;
-  final List<Map<String, dynamic>> photos;
+  final List<Map<String, dynamic>> photos; // photoId, date, localPath
 
   const MemorySwipeScreen({
     super.key,
@@ -17,19 +16,42 @@ class MemorySwipeScreen extends StatefulWidget {
   State<MemorySwipeScreen> createState() => _MemorySwipeScreenState();
 }
 
-class _MemorySwipeScreenState extends State<MemorySwipeScreen> {
+class _MemorySwipeScreenState extends State<MemorySwipeScreen>
+    with SingleTickerProviderStateMixin {
   int currentIndex = 0;
+
+  late AnimationController _controller;
+  late Animation<Offset> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _slideAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(0, 1),
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeIn,
+    ));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   void _handleSwipe(String action) {
     final photo = widget.photos[currentIndex];
-    final path = photo['photoId'];
-
-    // 🔥 삭제된 이미지 경로를 휴지통에 저장
-    if (action == '삭제') {
+    final path = photo['localPath'] as String?;
+    if (action == '삭제' && path != null) {
       trashBin.add(path);
     }
-
-    print('✅ [$action] 처리됨: $path');
+    print('✅ [$action] 처리됨: ${path ?? photo['photoId']}');
 
     setState(() {
       currentIndex++;
@@ -40,7 +62,13 @@ class _MemorySwipeScreenState extends State<MemorySwipeScreen> {
   Widget build(BuildContext context) {
     if (currentIndex >= widget.photos.length) {
       return Scaffold(
-        appBar: AppBar(title: Text(widget.folderName)),
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          title: Text(widget.folderName),
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 0,
+        ),
         body: const Center(
           child: Text(
             '🎉 모든 사진 정리가 끝났어요!',
@@ -51,10 +79,17 @@ class _MemorySwipeScreenState extends State<MemorySwipeScreen> {
     }
 
     final photo = widget.photos[currentIndex];
-    final date = photo['date'] ?? DateTime.now();
+    final date = photo['date'] as DateTime? ?? DateTime.now();
+    final path = photo['localPath'] as String?;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.folderName)),
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: Text(widget.folderName),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+      ),
       body: Column(
         children: [
           const SizedBox(height: 16),
@@ -63,8 +98,6 @@ class _MemorySwipeScreenState extends State<MemorySwipeScreen> {
             style: const TextStyle(fontSize: 16, color: Colors.black87),
           ),
           const SizedBox(height: 12),
-
-          // ✅ 이미지 영역 (스와이프 + 드래그)
           Expanded(
             child: Dismissible(
               key: UniqueKey(),
@@ -79,75 +112,85 @@ class _MemorySwipeScreenState extends State<MemorySwipeScreen> {
               child: GestureDetector(
                 onVerticalDragEnd: (details) {
                   if (details.primaryVelocity! > 0) {
-                    _handleSwipe('보류');
+                    _controller.forward(from: 0);
+                    Future.delayed(const Duration(milliseconds: 200), () {
+                      _handleSwipe('보류');
+                      _controller.reset();
+                    });
                   }
                 },
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
-                    child: Image.file(
-                      File(photo['photoId']),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.grey.shade300,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.broken_image, size: 60),
-                      ),
+                    child: SlideTransition(
+                      position: _slideAnimation,
+                      child: path != null && File(path).existsSync()
+                          ? Image.file(
+                              File(path),
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                            )
+                          : Container(
+                              color: Colors.grey.shade300,
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.broken_image,
+                                size: 60,
+                                color: Colors.white70,
+                              ),
+                            ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-
           const SizedBox(height: 12),
-
-          // 📌 스와이프 방향 안내
-          const Row(
+          // 이모지 심플하게 변경
+          Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              Text('👈 보관', style: TextStyle(fontSize: 14)),
-              Text('👇 보류', style: TextStyle(fontSize: 14)),
-              Text('삭제 👉', style: TextStyle(fontSize: 14)),
+            children: const [
+              Column(
+                children: [
+                  Icon(Icons.arrow_back_ios_new, color: Colors.black),
+                  SizedBox(height: 4),
+                  Text('보관',
+                      style: TextStyle(fontSize: 12, color: Colors.black)),
+                ],
+              ),
+              Column(
+                children: [
+                  Icon(Icons.arrow_downward, color: Colors.black),
+                  SizedBox(height: 4),
+                  Text('보류',
+                      style: TextStyle(fontSize: 12, color: Colors.black)),
+                ],
+              ),
+              Column(
+                children: [
+                  Icon(Icons.arrow_forward_ios, color: Colors.black),
+                  SizedBox(height: 4),
+                  Text('삭제',
+                      style: TextStyle(fontSize: 12, color: Colors.black)),
+                ],
+              ),
             ],
           ),
-
           const SizedBox(height: 20),
-
-          // 📌 버튼 액션 (스와이프 대신)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: () => _handleSwipe('보관'),
-                  child: const Text('보관'),
-                ),
-                ElevatedButton(
-                  onPressed: () => _handleSwipe('보류'),
-                  child: const Text('보류'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.redAccent,
-                  ),
-                  onPressed: () => _handleSwipe('삭제'),
-                  child: const Text('삭제'),
-                ),
-              ],
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color.fromARGB(255, 10, 47, 39),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
             ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 👋 종료 버튼
-          TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('여기까지만 할게요'),
           ),
-
           const SizedBox(height: 16),
         ],
       ),

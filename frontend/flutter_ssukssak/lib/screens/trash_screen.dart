@@ -86,7 +86,8 @@ class _TrashScreenState extends State<TrashScreen> {
                   ),
                   onPressed: () {
                     final deletedCount = _selectedIndices.length;
-                    final savedStorage = deletedCount * 0.1; // 예시: 0.1GB per image
+                    final savedStorage =
+                        deletedCount * 0.1; // 예시: 0.1GB per image
                     final savedCO2 = deletedCount * 0.028;
                     final savedTrees = savedCO2 / 1.4;
 

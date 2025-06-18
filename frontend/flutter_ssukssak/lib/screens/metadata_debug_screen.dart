@@ -73,7 +73,7 @@ class _MetadataDebugScreenState extends State<MetadataDebugScreen> {
   Future<void> _loadGroups() async {
     final svc = GalleryDedupeService(maxConcurrent: 4);
     svc.progressStream.listen((v) => setState(() => _dupProgress = v));
-    _groupMap = await svc.analyzeGallery(similarThreshold: 0.65);
+    _groupMap = await svc.analyzeGallery();
     svc.dispose();
     setState(() {});
   }

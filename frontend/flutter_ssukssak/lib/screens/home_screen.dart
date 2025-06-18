@@ -116,9 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // 중복/유사 그룹 계산 (신규 기준)
     final dedupeSvc = GalleryDedupeService(maxConcurrent: 4);
-    final groupMap = await dedupeSvc.analyzeGallery(
-      similarThreshold: 0.65,
-    );
+    final groupMap = await dedupeSvc.analyzeGallery();
     dedupeSvc.dispose();
 
     int processed = 0;
